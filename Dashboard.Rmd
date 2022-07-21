@@ -1,0 +1,252 @@
+---
+title: "Loan Prediction WebApp"
+output: 
+  flexdashboard::flex_dashboard:
+    theme:
+      version: 3
+      bootswatch: cosmo
+    orientation: columns
+    vertical_layout: fill
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(shiny)
+library(plotly)
+library(tidyverse)
+library(caret)
+library(viridis)
+library(hrbrthemes)
+library(ggplot2)
+library(DT)
+library(caTools)
+library(caret)
+library(markdown)
+```
+
+``` {r data}
+loan_data<- read.csv("Loan (5).csv")
+Numeric_variables<- c("Age","CCAvg","Mortgage" )
+Categorical_Var <- c("Family", "Education","PersonalLoan", "SecuritiesAccount", "CDAccount", "Online", "CreditCard")
+
+Ind_Var<- c("Income",  "Family",  "CCAvg", "Education" ,"CDAccount",  "Online", "CreditCard")
+
+theme = theme_ipsum() + theme(plot.caption = element_text(hjust=0, size=8),
+                                plot.title = element_text(hjust = 0, size=12, 
+                                                          face="bold"),
+                                axis.title.x = element_text(size=10),
+                                axis.title.y = element_text(size=10))
+
+#Models
+
+loan_new<-loan_data %>%
+  select(- c(ZIP.Code, Experience))
+
+set.seed(123)
+split <- sample.split(loan_new$PersonalLoan , SplitRatio = 0.7)
+train_loan <- subset(x = loan_new , split == TRUE)
+test_loan <- subset(x = loan_new, split==FALSE)
+
+train_loan <- train_loan %>% 
+  mutate(PersonalLoan = as.factor(PersonalLoan),
+         SecuritiesAccount = as.factor(SecuritiesAccount))
+
+library(pROC)
+log_model2<- glm(PersonalLoan ~ Income + Family + CCAvg + Education + CDAccount + Online + CreditCard, data = train_loan , family = binomial(link="logit"))
+pred_prob <- predict(object = log_model2, newdata = test_loan, type = "response")
+
+
+```
+
+Sidebar {.sidebar}
+=====================================
+
+```{r inputs}
+
+selectInput("Categorical_Var", label = "Select Categorical Variable:", choices = Categorical_Var, selected = Categorical_Var[1])
+
+selectInput("Numeric_variables", label = "Select Numeric Variable:", choices = Numeric_variables, selected = Numeric_variables[1])
+
+selectInput("Ind_Var", label = "Choose one or more Indpendent Variable:", choices = Ind_Var, selected = Ind_Var[1], multiple = TRUE)
+
+
+sliderInput(inputId="bw_adjust", label ="Density plot bandwidth adjustment:",
+            min =0.2, max=2, value=1, step=0.2)
+
+```
+
+**Data description**
+  
+education level
+(1) undergraduate 
+(2) graduate
+(3) advanced/professional
+
+Securities : 1=Yes, 0=No
+CDAccount : 1=Yes, 0=No
+Online : 1=Yes, 0=No
+CreditCard : 1=Yes, 0=No
+
+
+Page1
+==============================
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+
+### *BOXPLOT** Showing the relationship between Income and Education 
+
+```{r }
+
+renderPlotly(
+  { plot_ly(loan_data, x = ~Education, y= ~ Income ,color = ~Education, type = "box") }
+)
+
+```
+
+### DENSITY PLOT Showing the relationship between Numeric and Categorical Variable 
+
+```{r density}
+
+renderPlotly({
+  p1 = ggplot(loan_new, aes_string(x=input$Numeric_variables, fill= 'input$Categorical_Var')) +
+   geom_density(alpha = 0.4, bw = input$bw_adjust) +
+    theme + scale_fill_viridis(discrete = T, alpha=0.8, option="A") 
+  
+  ggplotly(p1, res=100)
+})
+
+```
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### BOX PLOT Showing the relationship between Numeric and Categorical Variable 
+
+```{r}
+
+renderPlotly({
+  plot_ly(loan_new,
+              x = ~loan_new[[input$Numeric_variables]],
+              color = ~loan_new[[input$Categorical_Var]],
+              colors = "Paired",
+              type = "box") %>%
+  layout(title = "",
+         xaxis = list(title = "" ,
+                      zeroline = FALSE))
+})
+```
+
+### BARCHART Showing the relationship between Numeric and Categorical Variable 
+
+```{r}
+
+renderPlotly({
+  loan_new %>%
+    count(var = loan_new[[input$Categorical_Var]], name = "count") %>%
+    plot_ly( x = ~var, y = ~ count, type = "bar", marker = list(color = '#008ae6',
+                           line = list(color = '#008ae6', width = 2)), hoverinfo = "x+y") %>%
+    add_text(text = ~paste0( " (",   scales::percent(count/sum(count)),")"), 
+           textposition = "bottom", 
+           textfont = list(size = 12, color = "white"), 
+           showlegend = FALSE) %>%
+    layout(xaxis = list(title = ""), yaxis = list(title = ""))
+    
+})
+
+
+```
+
+
+
+ML Model
+============================
+
+```{r reactive expression}
+
+model1 <- reactive({
+  vars <- as.matrix(loan_data[, input$Ind_Var])
+  glm(PersonalLoan ~ Income + Family + CCAvg + Education + CDAccount + Online + CreditCard, data = train_loan , family = binomial(link="logit"))
+})
+```
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### MODEL SUMMARY
+```{r model output}
+
+renderPrint({ 
+   
+summary(model1())
+
+})
+
+```
+
+### ROC CURVE
+```{r ROC}
+test_roc = roc(test_loan$PersonalLoan ~ pred_prob, plot = TRUE, print.auc = TRUE)
+```
+
+
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### DATATABLE
+
+```{r table2}
+DT::renderDataTable({
+
+ DT::datatable(train_loan %>% mutate(predicted = predict(model1()), residuals = residuals(model1())) %>% select(PersonalLoan, predicted, residuals), 
+ rownames = FALSE, colnames = c('Actual Loan', 'predicted Loan', 'residuals'), extensions = c('Buttons', 'Responsive'), 
+ options = list(columnDefs = list(list(className = 'dt-center', targets = "_all")), dom = 'Blfrt', 
+ buttons = c('copy', 'csv', 'excel', 'print'), searching = FALSE, lengthMenu = c(20, 100, 1000, nrow(loan_new)), scrollY = 300, scrollCollapse = TRUE)) %>% 
+ formatCurrency(c('PersonalLoan', 'predicted', 'residuals'))
+ 
+})
+
+```
+
+### HISTOGRAM
+
+```{r histogram1}
+renderPlotly({
+  
+
+plot_ly(train_loan, x = ~round(residuals(model1()),2), type = "histogram", marker = list(color = "#EA6345",
+                            line = list(color = "#FFFFFF", width = 1))) %>%   layout(title = '',
+         yaxis = list(zeroline = FALSE, title = "frequency",  titlefont = list(
+  family = "Lucida Console, Courier New, monospace", size = 12, color = "#FFFFFF"), 
+  tickfont = list(
+  family = "Lucida Console, Courier New, monospace", size = 10, color = "#FFFFFF"), color =  "white"),
+         xaxis = list(zeroline = FALSE, title = "residual",  titlefont = list(
+  family = "Lucida Console, Courier New, monospace", size = 12, color = "#FFFFFF"), 
+  tickfont = list(
+  family = "Lucida Console, Courier New, monospace", size = 10, color = "#FFFFFF"), color =  "white")) %>%
+  layout(plot_bgcolor='#678EB9', paper_bgcolor='#678EB9')
+
+
+})
+
+
+```
+
+
+# Table
+```{r table}
+renderDT(
+  loan_data,
+    filter = "top",server = FALSE,
+    extensions = c('Buttons', 'Scroller'),
+      options = list(
+        dom = 'Blfrtip',
+        buttons = c('csv', 'excel', 'pdf'),
+        scrollY = '600px',
+        scroller = TRUE
+        )
+    )
+```

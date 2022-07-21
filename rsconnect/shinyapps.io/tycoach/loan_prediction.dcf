@@ -1,0 +1,11 @@
+name: loan_prediction
+title:
+username:
+account: tycoach
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 5921689
+bundleId: 5719675
+url: https://tycoach.shinyapps.io/loan_prediction/
+when: 1648105088.71634
+lastSyncTime: 1648105088.71634
